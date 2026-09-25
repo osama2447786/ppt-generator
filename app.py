@@ -1,66 +1,81 @@
 import streamlit as st
 from pptx import Presentation
+import google.generativeai as genai
+import json
 import io
 
+# Setup Gemini API securely using Streamlit Secrets
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
+def generate_content(topic, num_slides):
+    # Initialize the model
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # Prompt the AI to return structured JSON
+    prompt = f"""
+    Create a {num_slides}-slide presentation about: {topic}. 
+    Return ONLY a raw JSON list. Do not include markdown formatting like ```json.
+    Format the output exactly like this example:
+    [
+        {{"title": "Introduction to AI", "content": "AI is simulating human intelligence.\\nIt relies on large datasets."}},
+        {{"title": "Machine Learning", "content": "A subset of AI.\\nSystems learn from data without explicit programming."}}
+    ]
+    """
+    
+    # Get the response
+    response = model.generate_content(prompt)
+    
+    try:
+        # Clean the response and parse the JSON string into a Python list
+        clean_json = response.text.strip().replace('```json', '').replace('```', '')
+        slides_data = json.loads(clean_json)
+        return slides_data
+    except Exception as e:
+        st.error(f"Failed to parse AI output: {e}")
+        return None
+
 def create_ppt(title, slides_data):
-    # Initialize presentation
     prs = Presentation()
     
-    # Create Title Slide (Layout 0)
-    title_slide_layout = prs.slide_layouts[0]
-    slide = prs.slides.add_slide(title_slide_layout)
-    title_shape = slide.shapes.title
-    subtitle = slide.placeholders[1]
-    title_shape.text = title
-    subtitle.text = "Generated with Streamlit"
+    # 1. Create Title Slide
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = title
+    slide.placeholders[1].text = "Generated dynamically with AI"
     
-    # Create Content Slides (Layout 1)
-    for slide_title, content in slides_data:
-        bullet_slide_layout = prs.slide_layouts[1]
-        slide = prs.slides.add_slide(bullet_slide_layout)
-        shapes = slide.shapes
+    # 2. Loop through JSON data to create Content Slides
+    for slide_dict in slides_data:
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = slide_dict.get("title", "Untitled Slide")
+        slide.placeholders[1].text = slide_dict.get("content", "")
         
-        title_shape = shapes.title
-        body_shape = shapes.placeholders[1]
-        
-        title_shape.text = slide_title
-        tf = body_shape.text_frame
-        tf.text = content
-        
-    # Save the presentation to an in-memory buffer
+    # 3. Save to memory buffer
     ppt_stream = io.BytesIO()
     prs.save(ppt_stream)
     ppt_stream.seek(0)
-    
     return ppt_stream
 
-# --- Streamlit User Interface ---
-st.title("📊 AI/Backend PPT Generator")
-st.write("Add your slide details below to instantly generate a PowerPoint file.")
+# --- User Interface ---
+st.title("🤖 AI-Powered PPT Generator")
+st.write("Type a topic, and AI will write the slides and generate the PowerPoint for you.")
 
-# Main Title
-deck_title = st.text_input("Presentation Title", "Quarterly Update")
+topic = st.text_input("What is your presentation about?", "The impact of renewable energy on the economy")
+num_slides = st.slider("Number of content slides", min_value=3, max_value=10, value=5)
 
-# Dynamic Slide Inputs
-st.markdown("### Slide Content")
-num_slides = st.number_input("How many content slides do you want?", min_value=1, max_value=10, value=2)
-
-slides_data = []
-for i in range(int(num_slides)):
-    with st.expander(f"Slide {i+1} Setup", expanded=True):
-        slide_title = st.text_input("Slide Title", value=f"Slide {i+1}", key=f"title_{i}")
-        slide_content = st.text_area("Slide Content", value="Type your points here...", key=f"content_{i}")
-        slides_data.append((slide_title, slide_content))
-
-# Generate and Download
-if st.button("Generate PowerPoint"):
-    with st.spinner("Generating deck..."):
-        ppt_file = create_ppt(deck_title, slides_data)
+if st.button("Generate AI Presentation"):
+    with st.spinner("AI is researching and writing your slides..."):
         
-        st.success("Your presentation is ready!")
-        st.download_button(
-            label="⬇️ Download .pptx File",
-            data=ppt_file,
-            file_name="generated_deck.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        )
+        # Step A: Get content from Gemini
+        slides_data = generate_content(topic, num_slides)
+        
+        if slides_data:
+            # Step B: Build the PPT file
+            ppt_file = create_ppt(topic, slides_data)
+            
+            # Step C: Offer the download
+            st.success("Your presentation is ready!")
+            st.download_button(
+                label="⬇️ Download .pptx File",
+                data=ppt_file,
+                file_name=f"{topic.replace(' ', '_')}_deck.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            )
